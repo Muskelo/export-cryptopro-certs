@@ -60,9 +60,11 @@ func printErr(err error) {
 
 // Flags struct
 type Flags struct {
-	Certmgr  string
-	Output   string
-	Expiring bool
+	Certmgr      string
+	Output       string
+	Expiring     bool
+	ExpiringDays int
+	ForUser      string
 }
 
 var flags Flags
@@ -105,10 +107,12 @@ func (cert *Cert) Set(key, value string) {
 // Main
 
 func parseFlags() error {
-	flagSet := flag.NewFlagSet("Default", flag.ContinueOnError)
+	flagSet := flag.NewFlagSet("export-cryptopro-certs", flag.ContinueOnError)
 	flagSet.StringVar(&flags.Certmgr, "certmgr", "/opt/cprocsp/bin/amd64/certmgr", "Path to certmgr")
 	flagSet.StringVar(&flags.Output, "output", "/tmp/certs-info.json", "Path to output file")
+	flagSet.StringVar(&flags.ForUser, "for-user", "zabbix", "Save file for user")
 	flagSet.BoolVar(&flags.Expiring, "expiring", true, "Export only expiring certs")
+	flagSet.IntVar(&flags.ExpiringDays, "expiring-days", 30, "Expiring duration")
 	return flagSet.Parse(os.Args[1:])
 }
 
@@ -132,8 +136,8 @@ func certIsExpiring(cert *Cert) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	warningDate := certExpire.AddDate(0, 0, -14)
-	if time.Now().Unix() > warningDate.Unix() {
+	certStartExpiring := certExpire.AddDate(0, 0, -flags.ExpiringDays)
+	if time.Now().Unix() > certStartExpiring.Unix() {
 		return true, nil
 	}
 	return false, nil
@@ -151,23 +155,21 @@ func getFile() (*os.File, error) {
 		return nil, err
 	}
 
-	// get uid and gid for zabbix user
-	zabbixUser, err := user.Lookup("zabbix")
+	// seta owner
+	userInfo, err := user.Lookup(flags.ForUser)
 	if err != nil {
 		return nil, err
 	}
-	uid, err := strconv.ParseInt(zabbixUser.Uid, 10, 64)
-	gid, err := strconv.ParseInt(zabbixUser.Gid, 10, 64)
+	uid, err := strconv.ParseInt(userInfo.Uid, 10, 64)
+	gid, err := strconv.ParseInt(userInfo.Gid, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-
-	// set uid and gid for file
 	err = file.Chown(int(uid), int(gid))
 
 	return file, err
 }
-func writeJSON(certs []*Cert) error {
+func writeJSONFile(certs []*Cert) error {
 	file, err := getFile()
 	if err != nil {
 		return err
@@ -206,7 +208,7 @@ func main() {
 		}
 	}
 
-	err = writeJSON(certs)
+	err = writeJSONFile(certs)
 	if err != nil {
 		printErr(fmt.Errorf("Can't write to file: %v", err))
 	}
